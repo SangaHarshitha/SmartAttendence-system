@@ -1,0 +1,58 @@
+"use client";
+import React from "react";
+import { User, MapPin, GraduationCap, Hash } from "lucide-react";
+
+const StudentProfileHeader = ({ student }) => {
+  // If rollNo exists in the DB object, it's a student
+  const isStudent = !!(student?.rollNo);
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="bg-white rounded-[3rem] p-8 shadow-sm border border-slate-100 relative overflow-hidden">
+        
+        {/* ROLE TAG */}
+        <div className="absolute top-8 right-8">
+          <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] ${
+            isStudent ? "bg-blue-600 text-white" : "bg-slate-900 text-white"
+          }`}>
+            {isStudent ? "Student Member" : "Faculty Member"}
+          </span>
+        </div>
+
+        <div className="flex flex-col md:flex-row items-center gap-10">
+          <div className="w-24 h-24 bg-slate-900 rounded-[2.5rem] flex items-center justify-center text-white shadow-2xl shrink-0">
+            <User size={40} />
+          </div>
+
+          <div className="flex-1 text-center md:text-left">
+            <h2 className="text-4xl font-black text-slate-800 italic uppercase tracking-tighter">
+              {student?.name || "User Name"}
+            </h2>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-8 pt-8 border-t border-slate-50">
+              {/* Branch Replacement */}
+              <div className="space-y-1">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Department</span>
+                <p className="text-lg font-bold text-slate-700">{student?.branch || "CSE"}</p>
+              </div>
+
+              {/* Year Replacement */}
+              <div className="space-y-1">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Academic Year</span>
+                <p className="text-lg font-bold text-slate-700">{student?.year || "Year 1"}</p>
+              </div>
+
+              {/* Roll No Replacement */}
+              <div className="space-y-1">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Roll Number</span>
+                <p className="text-lg font-black text-blue-600">{student?.rollNo || "N/A"}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default StudentProfileHeader;

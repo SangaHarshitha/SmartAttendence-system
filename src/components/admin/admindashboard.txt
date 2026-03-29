@@ -1,0 +1,649 @@
+import React, { useState, useMemo } from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart as RPieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+} from "recharts";
+import {
+  TrendingUp,
+  TrendingDown,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  Search,
+  Filter,
+  Calendar,
+  Users,
+  Activity,
+  Bell,
+  Download,
+} from "lucide-react";
+import RiskBadge from "../common/RiskBadge";
+import { calculatePercentage } from "../../utils";
+import {
+  sendMonthEndReminderToStaff,
+  notifyAttendanceSaved,
+} from "../../services/notificationService";
+import { downloadExcel, downloadPDF } from "../../utils/downloadReport";
+
+const AdminDashboard = ({ students = [], attendanceData = [], staffList = [] }) => {
+  const [selectedYear, setSelectedYear] = useState("all");
+  const [selectedBranch, setSelectedBranch] = useState("all");
+  const [selectedMonth, setSelectedMonth] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState("roll");
+  const [riskFilter, setRiskFilter] = useState("all");
+
+  /* ===========================
+     STUDENT STATS CALCULATION
+  =========================== */
+  const studentStats = useMemo(() => {
+    return students.map((s) => {
+      const records = attendanceData.filter((r) => {
+        const monthMatch =
+          selectedMonth === "all" || r.month === selectedMonth;
+        return r.studentId === s._id && monthMatch;
+      });
+
+      if (!records.length)
+        return { ...s, percentage: 0, totalHours: 0, attendedHours: 0, trend: 0 };
+
+      const totalHours = records.reduce((a, b) => a + b.totalHours, 0);
+      const attendedHours = records.reduce(
+        (a, b) => a + b.attendedHours,
+        0
+      );
+
+      const percentage = parseFloat(
+        calculatePercentage(attendedHours, totalHours)
+      );
+
+      return {
+        ...s,
+        percentage,
+        totalHours,
+        attendedHours,
+        trend: Math.random() > 0.5 ? 1 : -1,
+      };
+    });
+  }, [students, attendanceData, selectedMonth]);
+
+  /* ===========================
+     COLLEGE STATS
+  =========================== */
+  const collegeStats = useMemo(() => {
+    const totalStudents = studentStats.length;
+    const safe = studentStats.filter((s) => s.percentage >= 75).length;
+    const warning = studentStats.filter(
+      (s) => s.percentage >= 65 && s.percentage < 75
+    ).length;
+    const critical = studentStats.filter((s) => s.percentage < 65).length;
+
+    const avgAttendance =
+      totalStudents > 0
+        ? (
+            studentStats.reduce((a, b) => a + b.percentage, 0) /
+            totalStudents
+          ).toFixed(1)
+        : 0;
+
+    return { totalStudents, safe, warning, critical, avgAttendance };
+  }, [studentStats]);
+
+  const { totalStudents, safe, warning, critical, avgAttendance } =
+    collegeStats;
+
+  /* ===========================
+     FILTERING
+  =========================== */
+  const filteredStudents = useMemo(() => {
+    let filtered = [...studentStats];
+
+    if (selectedYear !== "all")
+      filtered = filtered.filter(
+        (s) => s.year === parseInt(selectedYear)
+      );
+
+    if (selectedBranch !== "all")
+      filtered = filtered.filter((s) => s.branch === selectedBranch);
+
+    if (searchQuery)
+      filtered = filtered.filter(
+        (s) =>
+          s.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          s.rollNo?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+
+    if (riskFilter !== "all") {
+      filtered = filtered.filter((s) => {
+        if (riskFilter === "safe") return s.percentage >= 75;
+        if (riskFilter === "warning")
+          return s.percentage >= 65 && s.percentage < 75;
+        if (riskFilter === "critical") return s.percentage < 65;
+        return true;
+      });
+    }
+
+    return filtered;
+  }, [
+    studentStats,
+    selectedYear,
+    selectedBranch,
+    searchQuery,
+    riskFilter,
+  ]);
+
+  /* ===========================
+     SORTING
+  =========================== */
+  const sortedStudents = useMemo(() => {
+    const sorted = [...filteredStudents];
+
+    if (sortBy === "rank")
+      sorted.sort((a, b) => b.percentage - a.percentage);
+    else if (sortBy === "name")
+      sorted.sort((a, b) => a.name.localeCompare(b.name));
+    else
+      sorted.sort((a, b) => a.rollNo.localeCompare(b.rollNo));
+
+    return sorted.map((s, idx) => ({
+      ...s,
+      rank: idx + 1,
+    }));
+  }, [filteredStudents, sortBy]);
+
+  /* ===========================
+     BRANCH PERFORMANCE (REAL)
+  =========================== */
+  const branchData = useMemo(() => {
+    const branches = [...new Set(students.map((s) => s.branch))];
+
+    return branches.map((branch) => {
+      const branchStudents = studentStats.filter(
+        (s) => s.branch === branch
+      );
+
+      const safeCount = branchStudents.filter(
+        (s) => s.percentage >= 75
+      ).length;
+      const warningCount = branchStudents.filter(
+        (s) => s.percentage >= 65 && s.percentage < 75
+      ).length;
+      const criticalCount = branchStudents.filter(
+        (s) => s.percentage < 65
+      ).length;
+
+      return {
+        name: branch,
+        safe: safeCount,
+        warning: warningCount,
+        critical: criticalCount,
+      };
+    });
+  }, [students, studentStats]);
+
+  /* ===========================
+     PIE DATA
+  =========================== */
+  const pieData = [
+    { name: "Safe", value: safe, color: "#22c55e" },
+    { name: "Warning", value: warning, color: "#f97316" },
+    { name: "Critical", value: critical, color: "#ef4444" },
+  ];
+
+  /* ===========================
+     DOWNLOAD
+  =========================== */
+  const handleDownloadExcel = () => {
+    downloadExcel(
+      sortedStudents.map((s) => ({
+        RollNo: s.rollNo,
+        Name: s.name,
+        Branch: s.branch,
+        Year: s.year,
+        Percentage: s.percentage,
+      })),
+      "Attendance_Report"
+    );
+  };
+
+  const handleDownloadPDF = () => {
+    downloadPDF(
+      sortedStudents,
+      "Attendance Report",
+      [
+        { key: "rollNo", label: "Roll No" },
+        { key: "name", label: "Name" },
+        { key: "branch", label: "Branch" },
+        { key: "year", label: "Year" },
+        { key: "percentage", label: "Attendance %" },
+      ]
+    );
+  };
+
+  /* ===========================
+     UI
+  =========================== */
+  return (
+    <div className="space-y-6">
+
+      {/* SUMMARY CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <SummaryCard title="Total Students" value={totalStudents} icon={<Users />} />
+        <SummaryCard title="Safe" value={safe} icon={<CheckCircle />} />
+        <SummaryCard title="Warning" value={warning} icon={<AlertTriangle />} />
+        <SummaryCard title="Critical" value={critical} icon={<XCircle />} />
+      </div>
+
+      {/* PIE CHART */}
+      <div className="bg-white p-6 rounded-xl shadow">
+        <h3 className="font-bold mb-4">Attendance Distribution</h3>
+        <ResponsiveContainer width="100%" height={300}>
+          <RPieChart>
+            <Pie data={pieData} dataKey="value">
+              {pieData.map((entry, index) => (
+                <Cell key={index} fill={entry.color} />
+              ))}
+            </Pie>
+            <RechartsTooltip />
+          </RPieChart>
+        </ResponsiveContainer>
+        <div className="text-center mt-2 font-bold">
+          Avg Attendance: {avgAttendance}%
+        </div>
+      </div>
+
+      {/* BRANCH CHART */}
+      <div className="bg-white p-6 rounded-xl shadow">
+        <h3 className="font-bold mb-4">Branch Performance</h3>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={branchData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Legend />
+            <Bar dataKey="safe" fill="#22c55e" />
+            <Bar dataKey="warning" fill="#f97316" />
+            <Bar dataKey="critical" fill="#ef4444" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* TABLE */}
+      <div className="bg-white rounded-xl shadow overflow-auto">
+        <table className="w-full">
+          <thead className="bg-slate-100">
+            <tr>
+              <th>Roll</th>
+              <th>Name</th>
+              <th>%</th>
+              <th>Status</th>
+              <th>Trend</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedStudents.map((student) => (
+              <tr key={student._id}>
+                <td>{student.rollNo}</td>
+                <td>{student.name}</td>
+                <td>{student.percentage}%</td>
+                <td>
+                  <RiskBadge percent={student.percentage} />
+                </td>
+                <td>
+                  {student.trend > 0 ? (
+                    <TrendingUp className="text-green-600" />
+                  ) : (
+                    <TrendingDown className="text-red-600" />
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* DOWNLOAD */}
+      <div className="flex gap-3">
+        <button onClick={handleDownloadExcel} className="bg-green-600 text-white px-4 py-2 rounded">
+          <Download size={16} /> Excel
+        </button>
+        <button onClick={handleDownloadPDF} className="bg-red-600 text-white px-4 py-2 rounded">
+          <Download size={16} /> PDF
+        </button>
+      </div>
+
+    </div>
+  );
+};
+
+const SummaryCard = ({ title, value, icon }) => (
+  <div className="bg-white p-6 rounded-xl shadow flex justify-between">
+    <div>
+      <div className="text-sm text-gray-500">{title}</div>
+      <div className="text-2xl font-bold">{value}</div>
+    </div>
+    {icon}
+  </div>
+);
+
+export default AdminDashboard;
+
+
+
+ student management
+ "use client";
+
+import React, { useState } from "react";
+
+const AdminStudentManagement = ({ students, setStudents }) => {
+  const [student, setStudent] = useState({
+    name: "",
+    rollNo: "",
+    email: "",
+    phone: "",
+    branch: "",
+    section: "",
+    academicYear: "",
+    year: 1,
+    password: "",
+  });
+
+  const refreshStudents = async () => {
+    const res = await fetch("/api/students");
+    const data = await res.json();
+    setStudents(data);
+  };
+
+  const handleSave = async () => {
+    if (
+      !student.name ||
+      !student.rollNo ||
+      !student.password ||
+      !student.section ||
+      !student.academicYear
+    ) {
+      alert("All required fields must be filled");
+      return;
+    }
+
+    await fetch("/api/students", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(student),
+    });
+
+    setStudent({
+      name: "",
+      rollNo: "",
+      email: "",
+      phone: "",
+      branch: "",
+      section: "",
+      academicYear: "",
+      year: 1,
+      password: "",
+    });
+
+    await refreshStudents();
+  };
+
+  const handleDelete = async (id) => {
+    await fetch(`/api/students/${id}`, { method: "DELETE" });
+    await refreshStudents();
+  };
+
+  return (
+    <div className="p-8 bg-white rounded-xl shadow-md">
+      <h2 className="text-2xl font-bold mb-6 text-gray-800">
+        Student Management
+      </h2>
+
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <input
+          className="input-style text-black"
+          placeholder="Name"
+          value={student.name}
+          onChange={(e) =>
+            setStudent({ ...student, name: e.target.value })
+          }
+        />
+
+        <input
+          className="input-style text-black"
+          placeholder="Roll No"
+          value={student.rollNo}
+          onChange={(e) =>
+            setStudent({ ...student, rollNo: e.target.value })
+          }
+        />
+
+        <input
+          className="input-style text-black"
+          placeholder="Email"
+          value={student.email}
+          onChange={(e) =>
+            setStudent({ ...student, email: e.target.value })
+          }
+        />
+
+        <input
+          className="input-style text-black"
+          placeholder="Phone"
+          value={student.phone}
+          onChange={(e) =>
+            setStudent({ ...student, phone: e.target.value })
+          }
+        />
+
+        <input
+          className="input-style text-black"
+          placeholder="Branch"
+          value={student.branch}
+          onChange={(e) =>
+            setStudent({ ...student, branch: e.target.value })
+          }
+        />
+
+        <input
+          className="input-style text-black"
+          placeholder="Section (A-Z)"
+          value={student.section}
+          onChange={(e) =>
+            setStudent({ ...student, section: e.target.value })
+          }
+        />
+
+        <input
+          className="input-style text-black"
+          placeholder="Academic Year (e.g., 2024-2025)"
+          value={student.academicYear}
+          onChange={(e) =>
+            setStudent({ ...student, academicYear: e.target.value })
+          }
+        />
+
+        <input
+          type="number"
+          className="input-style text-black"
+          placeholder="Year"
+          value={student.year}
+          onChange={(e) =>
+            setStudent({ ...student, year: e.target.value })
+          }
+        />
+
+        <input
+          type="password"
+          className="input-style col-span-2 text-black"
+          placeholder="Password"
+          value={student.password}
+          onChange={(e) =>
+            setStudent({ ...student, password: e.target.value })
+          }
+        />
+      </div>
+
+      <button
+        onClick={handleSave}
+        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg"
+      >
+        Add Student
+      </button>
+    </div>
+  );
+};
+
+export default AdminStudentManagement;
+
+
+staff
+import React, { useState } from "react";
+
+const AdminStaffManager = ({ staffList, setStaffList }) => {
+  const [currentStaff, setCurrentStaff] = useState({
+    name: "",
+    email: "",
+    password: "",
+    branch: "",
+    academicYear: "",
+  });
+
+  const token = localStorage.getItem("token");
+
+  const refreshStaff = async () => {
+    const res = await fetch("/api/staff");
+    setStaffList(await res.json());
+  };
+
+  const handleSave = async () => {
+    await fetch("/api/staff", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(currentStaff),
+    });
+
+    await refreshStaff();
+  };
+
+  const handleDelete = async (id) => {
+    await fetch(`/api/staff/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    await refreshStaff();
+  };
+
+  return (
+    <div>
+      <input
+        placeholder="Name"
+        value={currentStaff.name}
+        onChange={(e) =>
+          setCurrentStaff({ ...currentStaff, name: e.target.value })
+        }
+      />
+
+      <button onClick={handleSave}>Save</button>
+
+      {staffList.map((staff) => (
+        <div key={staff._id}>
+          {staff.name}
+          <button onClick={() => handleDelete(staff._id)}>Delete</button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export default AdminStaffManager;
+
+ branch
+ import React, { useState } from "react";
+import { Plus, Trash2, Layers, X, Save } from "lucide-react";
+
+const AdminBranchManager = ({ branches, setBranches }) => {
+  const [showModal, setShowModal] = useState(false);
+  const [branchName, setBranchName] = useState("");
+
+  const token = localStorage.getItem("token");
+
+  const refreshBranches = async () => {
+    const res = await fetch("/api/branches");
+    const data = await res.json();
+    setBranches(data);
+  };
+
+  const handleSave = async () => {
+    if (!branchName.trim()) return alert("Enter branch name");
+
+    await fetch("/api/branches", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ name: branchName }),
+    });
+
+    await refreshBranches();
+    setShowModal(false);
+    setBranchName("");
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this branch?")) return;
+
+    await fetch(`/api/branches/${id}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    await refreshBranches();
+  };
+
+  return (
+    <div>
+      <button onClick={() => setShowModal(true)}>Add Branch</button>
+
+      {branches.map((b) => (
+        <div key={b._id}>
+          {b.name}
+          <button onClick={() => handleDelete(b._id)}>
+            <Trash2 size={16} />
+          </button>
+        </div>
+      ))}
+
+      {showModal && (
+        <div>
+          <input
+            value={branchName}
+            onChange={(e) => setBranchName(e.target.value)}
+          />
+          <button onClick={handleSave}>
+            <Save size={16} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default AdminBranchManager;
